@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+@theme {
+  --color-cyber-bg: #0A0A0A;
+  --color-cyber-cyan: #00F0FF;
+  --color-cyber-magenta: #FF003C;
+  --color-cyber-panel: rgba(10, 10, 10, 0.7);
+  --font-mono: "Fira Code", monospace;
+  --font-sans: Inter, sans-serif;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-cyber-bg);
+    color: var(--color-gray-100);
+  }
+}
