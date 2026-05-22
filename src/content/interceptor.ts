@@ -2,38 +2,44 @@
 (function() {
   console.log("[Quantum Mock] Interceptor injected into MAIN world.");
 
-  (window as any).__quantumMockRules = [];
-  (window as any).__quantumIsRecording = false;
+  window.__quantumMockRules = [];
+  window.__quantumIsRecording = false;
 
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.data.source !== 'quantum-mock-bridge') return;
     if (event.data.type === 'UPDATE_STATE') {
-      (window as any).__quantumMockRules = event.data.rules;
-      (window as any).__quantumIsRecording = event.data.isRecording;
+      window.__quantumMockRules = (event.data.rules || []).map((rule: any) => {
+        try {
+          const regexString = rule.urlPattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+          rule.compiledRegex = new RegExp(regexString);
+        } catch (e) {
+          rule.compiledRegex = null;
+        }
+        return rule;
+      });
+      window.__quantumIsRecording = event.data.isRecording;
     }
   });
 
-  function matchUrl(pattern: string, url: string): boolean {
-    try {
-      const regexString = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-      const regex = new RegExp(regexString);
-      return regex.test(url);
-    } catch (e) {
-      return false;
+  function matchUrl(rule: any, url: string): boolean {
+    if (rule.compiledRegex) {
+      return rule.compiledRegex.test(url);
     }
+    return false;
   }
 
   function findMatchingRule(url: string, method: string) {
-    return ((window as any).__quantumMockRules || []).find((rule: any) => {
+    return (window.__quantumMockRules || []).find((rule: any) => {
       const methodMatch = rule.method === 'ANY' || rule.method === method.toUpperCase();
-      const urlMatch = matchUrl(rule.urlPattern, url);
+      const urlMatch = matchUrl(rule, url);
       return methodMatch && urlMatch;
     });
   }
 
   // ---- INTERCEPT FETCH ----
   const originalFetch = window.fetch;
-  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+  
+  const quantumFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     let url = '';
     let method = 'GET';
     
@@ -87,7 +93,19 @@
     if ((window as any).__quantumIsRecording) {
       try {
         const clone = response.clone();
-        const text = await clone.text();
+        
+        let text = "[Payload Binario, Streaming o Demasiado Grande]";
+        const contentType = clone.headers.get('content-type') || '';
+        const contentLengthStr = clone.headers.get('content-length');
+        const contentLength = contentLengthStr ? parseInt(contentLengthStr, 10) : 0;
+        
+        // Bloquear Event Streams (SSE) porque await clone.text() colgaría la promesa infinitamente
+        const isStreaming = contentType.includes('text/event-stream');
+        const isText = (contentType.includes('application/json') || contentType.includes('text/')) && !isStreaming;
+        
+        if (isText && contentLength <= 1048576) {
+          try { text = await clone.text(); } catch(e) {}
+        }
         const headersMap: Record<string, string> = {};
         clone.headers.forEach((v, k) => headersMap[k] = v);
         
@@ -118,6 +136,11 @@
           try { reqBody = await input.clone().text(); } catch(e) {}
         }
 
+        let safeBody = text || '';
+        if (safeBody.length > 1048576) {
+          safeBody = safeBody.substring(0, 1048576) + "\n...[TRUNCATED BY QUANTUM MOCK: PAYLOAD TOO LARGE]";
+        }
+
         window.postMessage({
           source: 'quantum-mock-interceptor',
           type: 'RECORD_TRAFFIC',
@@ -126,7 +149,7 @@
             method, 
             status: clone.status, 
             headers: headersMap, 
-            body: text,
+            body: safeBody,
             requestHeaders: reqHeadersMap,
             cookies: cookiesMap,
             requestBody: reqBody
@@ -140,28 +163,44 @@
     return response;
   };
 
+  // Bloquear re-escritura de fetch pero permitiendo configurabilidad por si otras librerías (Sentry, Datadog)
+  // intentan envolverlo usando getter/setter defensivo.
+  let currentFetch = quantumFetch;
+  Object.defineProperty(window, 'fetch', {
+    get: () => currentFetch,
+    set: (newFetch) => {
+      // Si intentan sobreescribir, forzamos a que su nueva función envuelva a nuestro quantumFetch
+      // de esta forma nunca nos puentean.
+      currentFetch = async (...args) => {
+        return newFetch.apply(window, args);
+      };
+    },
+    configurable: true,
+    enumerable: true
+  });
+
   // ---- INTERCEPT XHR ----
   const originalXHROpen = XMLHttpRequest.prototype.open;
   const originalXHRSend = XMLHttpRequest.prototype.send;
   const originalXHRSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
 
   XMLHttpRequest.prototype.open = function(method: string, url: string | URL, ...args: any[]) {
-    (this as any)._quantumMethod = method;
-    (this as any)._quantumUrl = url.toString();
-    (this as any)._quantumReqHeaders = {};
+    this._quantumMethod = method;
+    this._quantumUrl = url.toString();
+    this._quantumReqHeaders = {};
     return originalXHROpen.apply(this, [method, url, ...args] as any);
   };
 
   XMLHttpRequest.prototype.setRequestHeader = function(header: string, value: string) {
-    if (!(this as any)._quantumReqHeaders) (this as any)._quantumReqHeaders = {};
-    (this as any)._quantumReqHeaders[header.toLowerCase()] = value;
+    if (!this._quantumReqHeaders) this._quantumReqHeaders = {};
+    this._quantumReqHeaders[header.toLowerCase()] = value;
     return originalXHRSetRequestHeader.apply(this, [header, value]);
   };
 
   XMLHttpRequest.prototype.send = function(body?: Document | XMLHttpRequestBodyInit | null) {
-    if (typeof body === 'string') (this as any)._quantumReqBody = body;
-    const url = (this as any)._quantumUrl;
-    const method = (this as any)._quantumMethod;
+    if (typeof body === 'string') this._quantumReqBody = body;
+    const url = this._quantumUrl || '';
+    const method = this._quantumMethod || 'GET';
     const rule = findMatchingRule(url, method);
     
     if (rule) {
@@ -178,7 +217,7 @@
           });
           this.dispatchEvent(new ProgressEvent('error'));
           this.dispatchEvent(new ProgressEvent('loadend'));
-          if ((this as any).onerror) (this as any).onerror(new ProgressEvent('error'));
+          if (this.onerror) this.onerror(new ProgressEvent('error'));
           return;
         }
 
@@ -197,7 +236,7 @@
         let finalResponseStr = activeResponse.body;
         let finalResponse = finalResponseStr;
         
-        if ((this as any).responseType === 'json') {
+        if (this.responseType === 'json') {
           try {
             finalResponse = JSON.parse(finalResponseStr);
           } catch (e) {
@@ -228,7 +267,7 @@
       return;
     }
     
-    if ((window as any).__quantumIsRecording) {
+    if (window.__quantumIsRecording) {
       this.addEventListener('load', function() {
         try {
           const headersStr = this.getAllResponseHeaders();
@@ -241,11 +280,24 @@
             if (header) headersMap[header] = value;
           });
           
-          let bodyText = '';
-          if (this.responseType === '' || this.responseType === 'text') {
-            bodyText = this.responseText;
-          } else if (this.responseType === 'json') {
-            bodyText = JSON.stringify(this.response);
+          let bodyText = '[Payload Binario, Streaming o Demasiado Grande]';
+          const contentType = this.getResponseHeader('content-type') || '';
+          const contentLengthStr = this.getResponseHeader('content-length');
+          const contentLength = contentLengthStr ? parseInt(contentLengthStr, 10) : 0;
+          const isStreaming = contentType.includes('text/event-stream');
+          const isText = (contentType.includes('application/json') || contentType.includes('text/')) && !isStreaming;
+
+          // EVITAR DOMException: Si el dev forzó responseType a blob/arraybuffer, 
+          // invocar this.responseText crashea el motor.
+          const isSafeToReadText = this.responseType === '' || this.responseType === 'text';
+          const isSafeToReadJson = this.responseType === 'json';
+
+          if (isText && contentLength <= 1048576) {
+            if (isSafeToReadText) {
+              bodyText = this.responseText;
+            } else if (isSafeToReadJson) {
+              bodyText = JSON.stringify(this.response);
+            }
           }
 
           let cookiesMap: Record<string, string> = {};
@@ -260,6 +312,11 @@
             cookiesMap['_quantum_error'] = 'Security restriction prevented reading cookies';
           }
 
+          let safeBody = bodyText || '';
+          if (safeBody.length > 1048576) {
+            safeBody = safeBody.substring(0, 1048576) + "\n...[TRUNCATED BY QUANTUM MOCK: PAYLOAD TOO LARGE]";
+          }
+
           window.postMessage({
             source: 'quantum-mock-interceptor',
             type: 'RECORD_TRAFFIC',
@@ -268,7 +325,7 @@
               method: (this as any)._quantumMethod,
               status: this.status,
               headers: headersMap,
-              body: bodyText || '',
+              body: safeBody,
               requestHeaders: (this as any)._quantumReqHeaders || {},
               cookies: cookiesMap,
               requestBody: (this as any)._quantumReqBody || ''

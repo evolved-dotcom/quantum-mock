@@ -1,4 +1,5 @@
 import { db } from '../db/db';
+import { MockRuleSchema } from '../schema/mockRule';
 
 console.log("[Quantum Mock] Service Worker initialized.");
 
@@ -94,18 +95,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     };
     
-    db.mockRules.toArray().then(async (allRules) => {
-      // FIFO Garbage Collection
-      if (allRules.length >= 1000) {
-        const toDeleteCount = allRules.length - 999;
-        const toDeleteIds = allRules.slice(0, toDeleteCount).map(r => r.id);
-        await db.mockRules.bulkDelete(toDeleteIds);
-      }
-      
-      db.mockRules.put(newRule).then(() => {
+    const parseResult = MockRuleSchema.safeParse(newRule);
+    if (!parseResult.success) {
+      console.error("[Quantum Mock] Invalid traffic payload blocked by Zod", parseResult.error);
+      return;
+    }
+
+    const validNewRule = parseResult.data;
+    
+    const cleanUpAndSave = async () => {
+      try {
+        await db.transaction('rw', db.mockRules, async () => {
+          const count = await db.mockRules.count();
+          if (count >= 1000) {
+            const excess = count - 999;
+            const oldKeys = await db.mockRules.orderBy('id').limit(excess).primaryKeys();
+            await db.mockRules.bulkDelete(oldKeys as string[]);
+          }
+          await db.mockRules.put(validNewRule);
+        });
         broadcastState();
         chrome.runtime.sendMessage({ type: 'RULES_UPDATED' }).catch(() => {});
-      });
-    });
+      } catch (e) {
+        console.error("[Quantum Mock] Error saving shadow rule", e);
+      }
+    };
+
+    cleanUpAndSave();
   }
 });

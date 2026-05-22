@@ -50,67 +50,26 @@
         <div class="flex justify-between items-center">
           <div class="flex items-center gap-3">
             <h2 class="text-xl font-semibold text-white">Rules</h2>
-            <button v-if="selectedIds.length > 0" @click="deleteSelected" class="px-2 py-1 text-xs font-bold bg-red-500/20 text-red-400 border border-red-500/50 rounded hover:bg-red-500 hover:text-white transition">
+            <button v-if="selectedIds.length > 0" @click="trafficStore.deleteSelected()" class="px-2 py-1 text-xs font-bold bg-red-500/20 text-red-400 border border-red-500/50 rounded hover:bg-red-500 hover:text-white transition">
               Delete ({{ selectedIds.length }})
             </button>
           </div>
           <div class="flex gap-2 items-center">
-             <button v-if="rules.length > 0" @click="selectAll" class="px-2 py-1 text-xs font-bold bg-cyber-magenta/20 text-cyber-magenta border border-cyber-magenta/50 rounded hover:bg-cyber-magenta hover:text-white transition">Select All</button>
-             <button @click="createNewRule" class="px-3 py-1 bg-cyber-cyan/20 text-cyber-cyan border border-cyber-cyan/50 rounded hover:bg-cyber-cyan hover:text-black transition">
+             <button v-if="rules.length > 0" @click="trafficStore.selectAll()" class="px-2 py-1 text-xs font-bold bg-cyber-magenta/20 text-cyber-magenta border border-cyber-magenta/50 rounded hover:bg-cyber-magenta hover:text-white transition">Select All</button>
+             <button @click="trafficStore.createNewRule()" class="px-3 py-1 bg-cyber-cyan/20 text-cyber-cyan border border-cyber-cyan/50 rounded hover:bg-cyber-cyan hover:text-black transition">
                + New
              </button>
           </div>
         </div>
         
-        <div class="flex-1 overflow-y-auto pr-2 custom-scrollbar relative">
-          <div v-if="rules.length === 0" class="text-sm text-gray-500 text-center py-8 border border-dashed border-gray-800 rounded">
-            No rules yet. Create one or start recording.
-          </div>
-          
-          <div v-for="(paths, method) in groupedRules" :key="method" class="mb-6">
-            <h3 class="text-base font-bold mb-2 tracking-widest sticky top-0 bg-cyber-bg/95 backdrop-blur py-2 z-10" :class="getMethodTextColor(method as string)">
-              {{ method }} ({{ Object.values(paths).flat().length }})
-            </h3>
-            <div class="space-y-4">
-              <div v-for="(groupRules, path) in paths" :key="path" class="border-l-2 border-gray-700 pl-3 ml-1">
-                <div class="text-sm text-gray-300 font-bold font-mono mb-2 truncate bg-gray-900/50 py-1 px-2 rounded w-fit" :title="path as string">{{ path }}/*</div>
-                <div class="space-y-2">
-                  <div v-for="rule in groupRules" :key="rule.id" 
-                       @click="selectRule(rule)"
-                       class="p-3 rounded bg-cyber-panel border cursor-pointer transition flex items-start gap-3 hover:bg-gray-800"
-                       :class="selectedRule?.id === rule.id ? 'border-cyber-cyan shadow-[0_0_15px_rgba(0,240,255,0.3)]' : 'border-gray-700'">
-                    
-                    <input type="checkbox" :value="rule.id" v-model="selectedIds" @click.stop class="accent-red-500 w-5 h-5 mt-1 cursor-pointer">
-
-                    <div class="flex-1 min-w-0">
-                      <div class="flex justify-between items-center mb-1">
-                        <span class="font-mono text-base font-bold truncate flex items-center gap-2" :class="rule.active ? 'text-cyber-cyan' : 'text-gray-500'">
-                          {{ rule.name }}
-                          <span class="text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-[0_0_8px_rgba(0,240,255,0.4)] bg-cyber-cyan text-black leading-none" title="Times intercepted">
-                            {{ rule.interceptCount || 0 }}
-                          </span>
-                        </span>
-                        
-                        <label class="relative inline-flex items-center cursor-pointer ml-2" @click.stop>
-                          <input type="checkbox" v-model="rule.active" @change="saveRule(rule)" class="sr-only peer">
-                          <div class="w-10 h-5 bg-gray-800 border-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-500 peer-checked:after:bg-cyber-cyan after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyber-cyan/20 peer-checked:border-cyber-cyan border peer-checked:shadow-[0_0_8px_rgba(0,240,255,0.5)]"></div>
-                        </label>
-
-                      </div>
-                      <div class="text-sm text-gray-400 truncate flex items-center gap-1">
-                        <span class="truncate" :title="rule.urlPattern">{{ rule.urlPattern.replace(path as string, '') || '/' }}</span>
-                      </div>
-                      <div class="mt-2 flex gap-2">
-                        <span v-if="rule.responses.length > 1" class="text-xs text-cyber-cyan font-bold border border-cyber-cyan/50 px-2 py-0.5 rounded bg-cyber-cyan/10">State {{ (rule.activeResponseIndex || 0) + 1 }}/{{rule.responses.length}}</span>
-                        <span v-if="rule.responses[rule.activeResponseIndex || 0]?.simulateNetworkError" class="text-xs text-cyber-magenta font-bold border border-cyber-magenta/50 px-2 py-0.5 rounded bg-cyber-magenta/10">ERR</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <TrafficList 
+          :rules="trafficStore.rules.value" 
+          :selectedRule="trafficStore.selectedRule.value" 
+          :selectedIds="trafficStore.selectedIds.value"
+          @update:selectedIds="trafficStore.selectedIds.value = $event"
+          @select-rule="selectRule"
+          @save-rule="trafficStore.saveRule"
+        />
       </aside>
 
       <!-- Right Panel: Master-Detail -->
@@ -125,7 +84,7 @@
             </button>
           </div>
 
-          <button @click="saveRule(selectedRule)" class="px-6 py-2 text-black font-bold rounded transition" :class="isSaving ? 'bg-green-400 shadow-[0_0_15px_rgba(74,222,128,0.5)]' : 'bg-cyber-cyan hover:shadow-[0_0_15px_rgba(0,240,255,0.5)]'">
+          <button @click="trafficStore.saveRule(selectedRule)" class="px-6 py-2 text-black font-bold rounded transition" :class="isSaving ? 'bg-green-400 shadow-[0_0_15px_rgba(74,222,128,0.5)]' : 'bg-cyber-cyan hover:shadow-[0_0_15px_rgba(0,240,255,0.5)]'">
             {{ isSaving ? '✓ Saved!' : 'Save Rule' }}
           </button>
         </div>
@@ -268,15 +227,19 @@ import { ref, onMounted, computed, watch } from 'vue';
 import { db } from '../../db/db';
 import InspectorDictView from './components/InspectorDictView.vue';
 import InspectorPayload from './components/InspectorPayload.vue';
-import type { MockRule } from '../../schema/mockRule';
+import { MockRuleSchema, type MockRule } from '../../schema/mockRule';
 import JsonViewer from './components/JsonViewer.vue';
 import StatusCodeSelect from './components/StatusCodeSelect.vue';
 import CyberSelect from './components/CyberSelect.vue';
+import TrafficList from './components/TrafficList.vue';
+import { useTrafficStore } from './composables/useTrafficStore';
 
-const rules = ref<MockRule[]>([]);
-const selectedRule = ref<MockRule | null>(null);
-const selectedIds = ref<string[]>([]);
-const isSaving = ref(false);
+const trafficStore = useTrafficStore();
+const rules = trafficStore.rules;
+const selectedRule = trafficStore.selectedRule;
+const selectedIds = trafficStore.selectedIds;
+const isSaving = trafficStore.isSaving;
+
 const isRecording = ref(false);
 const jsonViewMode = ref(false);
 
@@ -332,45 +295,7 @@ const inspectorProps = computed(() => {
   }
 });
 
-const groupedRules = computed(() => {
-  const groups: Record<string, Record<string, MockRule[]>> = {};
-  const order = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'ANY'];
-  
-  for (const rule of rules.value) {
-    if (!groups[rule.method]) groups[rule.method] = {};
-    
-    let rawUrl = rule.urlPattern?.trim() || '';
-    let basePath = rawUrl.split('?')[0];
-    
-    if (basePath !== '*' && basePath !== '.*' && basePath !== '') {
-      try {
-        if (basePath.startsWith('http')) {
-          const u = new URL(basePath);
-          const parts = u.pathname.split('/').filter(Boolean);
-          const groupSegments = parts.slice(0, 2);
-          basePath = u.origin + (groupSegments.length ? '/' + groupSegments.join('/') : '');
-        } else {
-          const parts = basePath.split('/').filter(Boolean);
-          const groupSegments = parts.slice(0, 2);
-          basePath = groupSegments.length ? '/' + groupSegments.join('/') : basePath;
-        }
-      } catch(e) {
-        const parts = basePath.split('/');
-        basePath = parts.slice(0, 3).join('/');
-      }
-    }
-    
-    if (!groups[rule.method][basePath]) groups[rule.method][basePath] = [];
-    groups[rule.method][basePath].push(rule);
-  }
-  
-  const sortedGroups: Record<string, Record<string, MockRule[]>> = {};
-  order.forEach(method => {
-    if (groups[method]) sortedGroups[method] = groups[method];
-  });
-  
-  return sortedGroups;
-});
+
 
 const parsedJsonBody = computed(() => {
   if (!selectedRule.value) return null;
@@ -393,31 +318,7 @@ const showImport = ref(false);
 const importData = ref('');
 const exportToast = ref(false);
 
-const loadRules = async () => {
-  const rawRules = await db.mockRules.toArray();
-  const migratedRules: MockRule[] = [];
-  
-  for (const r of rawRules) {
-    if (!r.responses && (r as any).response) {
-      r.responses = [{
-        ...((r as any).response),
-        delayMs: (r as any).delayMs || 0,
-        simulateNetworkError: (r as any).simulateNetworkError || false
-      }];
-      delete (r as any).response;
-      delete (r as any).delayMs;
-      delete (r as any).simulateNetworkError;
-      r.activeResponseIndex = 0;
-      await db.mockRules.put(r);
-    }
-    if (r.activeResponseIndex === undefined) {
-      r.activeResponseIndex = 0;
-    }
-    migratedRules.push(r as MockRule);
-  }
-  
-  rules.value = migratedRules;
-};
+
 
 const loadRecordingState = async () => {
   const result = await chrome.storage.local.get('isRecording');
@@ -429,7 +330,7 @@ const toggleRecording = async () => {
 };
 
 onMounted(() => {
-  loadRules();
+  trafficStore.loadRules();
   loadRecordingState();
 });
 
@@ -441,13 +342,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'RULES_UPDATED') {
-    loadRules();
+    trafficStore.loadRules();
   }
 });
-
-const notifyBackground = () => {
-  chrome.runtime.sendMessage({ type: 'RULES_UPDATED' });
-};
 
 const createNewRule = () => {
   const newRule: MockRule = {
@@ -475,7 +372,7 @@ const createNewRule = () => {
 const switchState = async (idx: number) => {
   if (!selectedRule.value) return;
   selectedRule.value.activeResponseIndex = idx;
-  await saveRule(selectedRule.value);
+  await trafficStore.saveRule(selectedRule.value);
 };
 
 const addState = async () => {
@@ -483,7 +380,7 @@ const addState = async () => {
   const lastState = selectedRule.value.responses[selectedRule.value.responses.length - 1];
   selectedRule.value.responses.push(JSON.parse(JSON.stringify(lastState)));
   selectedRule.value.activeResponseIndex = selectedRule.value.responses.length - 1;
-  await saveRule(selectedRule.value);
+  await trafficStore.saveRule(selectedRule.value);
 };
 
 const removeState = async (idx: number) => {
@@ -493,18 +390,7 @@ const removeState = async (idx: number) => {
   if ((selectedRule.value.activeResponseIndex || 0) >= selectedRule.value.responses.length) {
     selectedRule.value.activeResponseIndex = selectedRule.value.responses.length - 1;
   }
-  await saveRule(selectedRule.value);
-};
-
-const saveRule = async (rule: MockRule) => {
-  await db.mockRules.put(JSON.parse(JSON.stringify(rule)));
-  await loadRules();
-  notifyBackground();
-  
-  isSaving.value = true;
-  setTimeout(() => {
-    isSaving.value = false;
-  }, 1200);
+  await trafficStore.saveRule(selectedRule.value);
 };
 
 const selectRule = (rule: MockRule) => {
@@ -514,27 +400,6 @@ const selectRule = (rule: MockRule) => {
   if (selectedRule.value.capturedTraffic) {
     inspectorTab.value = 'reqPayload';
   }
-};
-
-const selectAll = () => {
-  if (selectedIds.value.length === rules.value.length) {
-    selectedIds.value = [];
-  } else {
-    selectedIds.value = rules.value.map(r => r.id);
-  }
-};
-
-const deleteSelected = async () => {
-  if (selectedIds.value.length === 0) return;
-  await db.mockRules.bulkDelete(selectedIds.value);
-  
-  if (selectedRule.value && selectedIds.value.includes(selectedRule.value.id)) {
-    selectedRule.value = null;
-  }
-  
-  selectedIds.value = [];
-  await loadRules();
-  notifyBackground();
 };
 
 const exportHub = () => {
@@ -553,15 +418,25 @@ const importHub = async () => {
   if (!importData.value) return;
   try {
     const jsonStr = decodeURIComponent(escape(atob(importData.value.trim())));
-    const importedRules: MockRule[] = JSON.parse(jsonStr);
+    const rawParsed = JSON.parse(jsonStr);
     
+    // ZOD VALIDATION: Garantizar estructura de Mocks
+    const validation = MockRuleSchema.array().safeParse(rawParsed);
+    if (!validation.success) {
+      alert('Error de validación: El formato de los datos importados no es válido.');
+      console.error(validation.error);
+      return;
+    }
+    
+    const importedRules: MockRule[] = validation.data;
+
     for (const r of importedRules) {
       r.id = crypto.randomUUID(); 
       await db.mockRules.put(r);
     }
     
-    await loadRules();
-    notifyBackground();
+    await trafficStore.loadRules();
+    trafficStore.notifyBackground();
     showImport.value = false;
     importData.value = '';
     alert(`Successfully injected ${importedRules.length} rules!`);
