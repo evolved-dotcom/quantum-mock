@@ -48,6 +48,20 @@ export function useTrafficStore() {
         if (r.activeResponseIndex === undefined) {
           r.activeResponseIndex = 0;
         }
+
+        // DEFENSA DE RAM PARA VUE: Truncar strings gigantes antes de hacerlos reactivos
+        if (r.capturedTraffic && r.capturedTraffic.requestBody && r.capturedTraffic.requestBody.length > 15000) {
+          r.capturedTraffic.requestBody = r.capturedTraffic.requestBody.substring(0, 15000) + '\n...[Contenido truncado en vista de lista...]';
+        }
+        
+        if (r.responses) {
+          r.responses.forEach((res: any) => {
+            if (res.body && typeof res.body === 'string' && res.body.length > 15000) {
+              res.body = res.body.substring(0, 15000) + '\n...[Contenido truncado en vista de lista...]';
+            }
+          });
+        }
+
         migratedRules.push(r as MockRule);
       }
       

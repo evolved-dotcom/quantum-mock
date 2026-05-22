@@ -90,7 +90,7 @@
     const response = await originalFetch(input, init);
     
     // Si no está mockeado y estamos grabando
-    if ((window as any).__quantumIsRecording) {
+    if (window.__quantumIsRecording) {
       try {
         const clone = response.clone();
         
@@ -103,8 +103,40 @@
         const isStreaming = contentType.includes('text/event-stream');
         const isText = (contentType.includes('application/json') || contentType.includes('text/')) && !isStreaming;
         
-        if (isText && contentLength <= 1048576) {
-          try { text = await clone.text(); } catch(e) {}
+        let safeBody = "[Payload Binario, Streaming o Demasiado Grande]";
+        
+        if (isText && clone.body) {
+          try {
+            const reader = clone.body.getReader();
+            const decoder = new TextDecoder();
+            let totalRead = 0;
+            let chunks = '';
+            
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              
+              if (value) {
+                totalRead += value.length;
+                chunks += decoder.decode(value, { stream: true });
+                
+                if (totalRead > 1048576) {
+                  reader.cancel();
+                  chunks += "\n...[TRUNCATED BY QUANTUM: PAYLOAD CHUNKED TOO LARGE]";
+                  break;
+                }
+              }
+            }
+            chunks += decoder.decode();
+            safeBody = chunks;
+          } catch (e) {
+            safeBody = "[Error leyendo body stream]";
+          }
+        } else if (isText) {
+          try { 
+            const t = await clone.text(); 
+            safeBody = t.length > 1048576 ? t.substring(0, 1048576) + "\n...[TRUNCATED BY QUANTUM: PAYLOAD CHUNKED TOO LARGE]" : t;
+          } catch(e) {}
         }
         const headersMap: Record<string, string> = {};
         clone.headers.forEach((v, k) => headersMap[k] = v);
@@ -134,11 +166,6 @@
           reqBody = init.body;
         } else if (input instanceof Request) {
           try { reqBody = await input.clone().text(); } catch(e) {}
-        }
-
-        let safeBody = text || '';
-        if (safeBody.length > 1048576) {
-          safeBody = safeBody.substring(0, 1048576) + "\n...[TRUNCATED BY QUANTUM MOCK: PAYLOAD TOO LARGE]";
         }
 
         window.postMessage({
@@ -282,22 +309,17 @@
           
           let bodyText = '[Payload Binario, Streaming o Demasiado Grande]';
           const contentType = this.getResponseHeader('content-type') || '';
-          const contentLengthStr = this.getResponseHeader('content-length');
-          const contentLength = contentLengthStr ? parseInt(contentLengthStr, 10) : 0;
-          const isStreaming = contentType.includes('text/event-stream');
-          const isText = (contentType.includes('application/json') || contentType.includes('text/')) && !isStreaming;
-
           // EVITAR DOMException: Si el dev forzó responseType a blob/arraybuffer, 
           // invocar this.responseText crashea el motor.
           const isSafeToReadText = this.responseType === '' || this.responseType === 'text';
           const isSafeToReadJson = this.responseType === 'json';
 
-          if (isText && contentLength <= 1048576) {
-            if (isSafeToReadText) {
-              bodyText = this.responseText;
-            } else if (isSafeToReadJson) {
-              bodyText = JSON.stringify(this.response);
-            }
+          if (isSafeToReadText) {
+             const rawText = this.responseText || '';
+             bodyText = rawText.length > 1048576 ? rawText.substring(0, 1048576) + "\n...[TRUNCATED BY QUANTUM: PAYLOAD CHUNKED TOO LARGE]" : rawText;
+          } else if (isSafeToReadJson) {
+             const rawJson = JSON.stringify(this.response || {});
+             bodyText = rawJson.length > 1048576 ? rawJson.substring(0, 1048576) + "\n...[TRUNCATED BY QUANTUM: PAYLOAD CHUNKED TOO LARGE]" : rawJson;
           }
 
           let cookiesMap: Record<string, string> = {};
@@ -313,22 +335,19 @@
           }
 
           let safeBody = bodyText || '';
-          if (safeBody.length > 1048576) {
-            safeBody = safeBody.substring(0, 1048576) + "\n...[TRUNCATED BY QUANTUM MOCK: PAYLOAD TOO LARGE]";
-          }
 
           window.postMessage({
             source: 'quantum-mock-interceptor',
             type: 'RECORD_TRAFFIC',
             payload: {
-              url: (this as any)._quantumUrl,
-              method: (this as any)._quantumMethod,
+              url: this._quantumUrl,
+              method: this._quantumMethod,
               status: this.status,
               headers: headersMap,
               body: safeBody,
-              requestHeaders: (this as any)._quantumReqHeaders || {},
+              requestHeaders: this._quantumReqHeaders || {},
               cookies: cookiesMap,
-              requestBody: (this as any)._quantumReqBody || ''
+              requestBody: this._quantumReqBody || ''
             }
           }, '*');
         } catch (e) { }
